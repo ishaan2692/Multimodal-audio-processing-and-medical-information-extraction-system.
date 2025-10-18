@@ -13,7 +13,9 @@ from langdetect import detect, DetectorFactory
 import speech_recognition as sr
 from audiorecorder import audiorecorder   # from streamlit-audiorecorder
 
-# ---------------- CONFIG ----------------
+# ---------------------------------------------------------------------
+# CONFIGURATION
+# ---------------------------------------------------------------------
 DetectorFactory.seed = 0
 MODEL_NAME = "google/flan-t5-small"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -28,7 +30,9 @@ def load_model():
 
 tokenizer, model = load_model()
 
-# -------------- HELPER FUNCTIONS -----------------
+# ---------------------------------------------------------------------
+# UTILITIES
+# ---------------------------------------------------------------------
 def run_t5_prompt(prompt: str, max_length: int = 256) -> str:
     inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=MAX_T5_INPUT)
     input_ids = inputs.input_ids.to(DEVICE)
@@ -81,21 +85,32 @@ def detect_language_from_text(text: str) -> Optional[str]:
     except Exception:
         return None
 
-# --- Prompt Templates ---
+# ---------------------------------------------------------------------
+# PROMPT TEMPLATES
+# ---------------------------------------------------------------------
 def prompt_extract_qa(t: str): 
-    return f"""Extract Q&A pairs (doctor/patient) from the conversation:
-{t}
-Return JSON array of objects with fields: speaker_question, question, answer, timestamps."""
+    return f"""Identify key questions and responses from the consultation below.
+Return JSON array with: speaker_question, question, answer, timestamps.
 
-def prompt_extract_entities(t: str):
-    return f"""Extract medical entities (symptoms, diagnosis, medication, etc.) from:
-{t}
-Return JSON array with fields: term, type, suggested_code, confidence."""
-
-def prompt_summary(t: str):
-    return f"""Summarize this doctor-patient conversation (3 sentences max):
+Conversation:
 {t}"""
 
+def prompt_extract_entities(t: str):
+    return f"""From the following text, list important clinical terms such as symptoms, diagnoses, procedures, or medications.
+Return JSON array with: term, type, suggested_code, confidence.
+
+Text:
+{t}"""
+
+def prompt_summary(t: str):
+    return f"""Write a brief, clear summary of this consultation (2–3 sentences) focusing on symptoms, impressions, and plan.
+
+Conversation:
+{t}"""
+
+# ---------------------------------------------------------------------
+# INFORMATION EXTRACTION
+# ---------------------------------------------------------------------
 def extract_qa(transcript: str) -> List[dict]:
     result = run_t5_prompt(prompt_extract_qa(transcript), max_length=384)
     try:
@@ -113,43 +128,49 @@ def extract_entities(text: str) -> List[dict]:
 def generate_summary(text: str) -> str:
     return run_t5_prompt(prompt_summary(text), max_length=128).strip()
 
-# ---------------- STREAMLIT APP ----------------
-st.set_page_config(page_title="Med-Conversation POC", page_icon="🩺", layout="centered")
-st.title("🩺 Med-Conversation POC")
-st.caption("Upload or record doctor-patient audio → Transcription → Language detection → Q&A → Entities → Summary")
+# ---------------------------------------------------------------------
+# STREAMLIT INTERFACE
+# ---------------------------------------------------------------------
+st.set_page_config(page_title="Clinical Conversation POC", page_icon="🩺", layout="centered")
 
-# Tabs for input methods
+st.title("🩺 Clinical Conversation Processor")
+st.caption("Record or upload a consultation to obtain transcription, detected language, extracted Q&A, clinical terms, and a concise summary.")
+
 tab1, tab2 = st.tabs(["🎙️ Record audio", "📁 Upload audio"])
 
 audio_bytes = None
 input_name = "input.wav"
 
+# --- Tab 1: Record ---
 with tab1:
-    st.markdown("Press record, then stop when done.")
+    st.markdown("Click **Start Recording**, speak naturally, and then click **Stop Recording**.")
     recorded_audio = audiorecorder("Start Recording", "Stop Recording")
 
     if len(recorded_audio) > 0:
-        # Convert AudioSegment → WAV bytes
-        buf = io.BytesIO()
-        recorded_audio.export(buf, format="wav")
-        audio_bytes = buf.getvalue()
+        buffer = io.BytesIO()
+        recorded_audio.export(buffer, format="wav")
+        audio_bytes = buffer.getvalue()
         st.audio(audio_bytes, format="audio/wav")
-        input_name = "mic_recording.wav"
+        input_name = "recorded_consultation.wav"
 
+# --- Tab 2: Upload ---
 with tab2:
     uploaded_file = st.file_uploader("Upload audio file", type=["wav", "mp3", "m4a"])
     if uploaded_file:
-        st.audio(uploaded_file)
         audio_bytes = uploaded_file.read()
+        st.audio(audio_bytes, format="audio/wav")
         input_name = uploaded_file.name
 
-prefer_language = st.selectbox("Preferred language", ["auto-detect", "en", "hi", "mr"])
+prefer_language = st.selectbox("Preferred language", ["auto-detect", "en", "hi", "mr"], index=0)
 
+# --- Processing ---
 if audio_bytes:
-    if st.button("🚀 Process"):
-        with st.spinner("Processing audio... This may take a few seconds ⏳"):
+    if st.button("Process Recording"):
+        with st.spinner("Analyzing audio..."):
             try:
                 wav_path = convert_to_wav_mono_16k(audio_bytes, input_name)
+
+                # Step 1: initial transcription
                 first_text, log1 = transcribe_with_google(wav_path, "en-US")
                 detected = detect_language_from_text(first_text)
                 if prefer_language != "auto-detect":
@@ -158,42 +179,44 @@ if audio_bytes:
                 lang_map = {"en": "en-US", "hi": "hi-IN", "mr": "mr-IN"}
                 lang_code = lang_map.get(detected, "en-US")
 
+                # Step 2: re-run STT if non-English
                 if detected in ("hi", "mr"):
                     final_text, log2 = transcribe_with_google(wav_path, lang_code)
                 else:
                     final_text, log2 = first_text, {}
 
                 if not final_text.strip():
-                    st.error("No transcription obtained.")
+                    st.error("No speech detected or transcription unavailable.")
                     st.stop()
 
-                st.subheader("📝 Transcript")
+                # Step 3: display results
+                st.subheader("Transcript")
                 st.write(final_text)
 
-                st.subheader("🌐 Detected language")
-                st.write(f"Detected: **{detected or 'unknown'}** | Google code: `{lang_code}`")
+                st.subheader("Detected Language")
+                st.write(f"Detected: **{detected or 'unknown'}**  |  Code used: `{lang_code}`")
 
                 qa_pairs = extract_qa(final_text)
                 entities = []
                 for qa in qa_pairs:
-                    combo = f"{qa.get('question','')} {qa.get('answer','')}"
-                    ents = extract_entities(combo)
+                    combined = f"{qa.get('question','')} {qa.get('answer','')}"
+                    ents = extract_entities(combined)
                     qa["entities"] = ents
                     entities.extend(ents)
 
                 summary = generate_summary(final_text)
 
-                st.subheader("❓ Extracted Q&A")
+                st.subheader("Question & Response Highlights")
                 st.json(qa_pairs)
 
-                st.subheader("🏷️ Entities")
+                st.subheader("Clinical Terms")
                 st.json(entities)
 
-                st.subheader("📋 Summary")
+                st.subheader("Consultation Summary")
                 st.write(summary)
 
                 os.remove(wav_path)
 
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error("An unexpected error occurred.")
                 st.text(traceback.format_exc())
