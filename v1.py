@@ -127,11 +127,24 @@ input_name = "input.wav"
 with tab1:
     st.markdown("Press record, then stop when done.")
     recorded_audio = audiorecorder("Start Recording", "Stop Recording")
-
+'''
     if len(recorded_audio) > 0:
         st.audio(recorded_audio.tobytes(), format="audio/wav")
         audio_bytes = recorded_audio.tobytes()
         input_name = "mic_recording.wav"
+'''
+
+
+    if len(recorded_audio) > 0:
+    # Convert AudioSegment → WAV bytes
+        buf = io.BytesIO()
+        recorded_audio.export(buf, format="wav")
+        audio_bytes = buf.getvalue()
+        st.audio(audio_bytes, format="audio/wav")
+        input_name = "mic_recording.wav"
+
+
+
 
 with tab2:
     uploaded_file = st.file_uploader("Upload audio file", type=["wav", "mp3", "m4a"])
@@ -194,3 +207,4 @@ if audio_bytes:
             except Exception as e:
                 st.error(f"Error: {e}")
                 st.text(traceback.format_exc())
+
