@@ -1,0 +1,7 @@
+streamlit 
+torch 
+transformers 
+pydub 
+langdetect 
+SpeechRecognition
+streamlit-audiorecorder
