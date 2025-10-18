@@ -133,7 +133,7 @@ def generate_summary(text: str) -> str:
 # ---------------------------------------------------------------------
 st.set_page_config(page_title="Clinical Conversation POC", page_icon="🩺", layout="centered")
 
-st.title("🩺 Clinical Conversation Processor")
+st.title("Clinical Conversation Processor")
 st.caption("Record or upload a consultation to obtain transcription, detected language, extracted Q&A, clinical terms, and a concise summary.")
 
 tab1, tab2 = st.tabs(["🎙️ Record audio", "📁 Upload audio"])
